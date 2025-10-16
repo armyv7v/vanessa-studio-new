@@ -63,22 +63,6 @@ export default function BookingFlow({ config }) {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  useEffect(() => {
-    async function fetchDisabledDays() {
-      try {
-        const res = await fetch('/api/gs-check?action=getConfig');
-        if (!res.ok) {
-          throw new Error(`La API interna devolvió un error ${res.status}`);
-        }
-        const data = await res.json();
-        if (data && data.disabledDays) setDisabledDaysConfig(data.disabledDays);
-      } catch (error) {
-        console.error("Error fetching disabled days config:", error);
-      }
-    }
-    fetchDisabledDays();
-  }, []);
-
   const fetchSlots = useCallback(async (dateObj, serviceId) => {
     try {
       setLoadingSlots(true);
