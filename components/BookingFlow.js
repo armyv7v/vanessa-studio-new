@@ -3,9 +3,9 @@ import { useState, useEffect, useCallback } from 'react';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { services as servicesData } from '../lib/services';
-import { getAvailableSlots } from '../lib/api';
+import { generateTimeSlots } from '../lib/slots';
 import { isAllowedBusinessDay } from '../lib/calendarConfig';
-import { useClientAutocomplete } from '../lib/useClientAutocomplete';
+import { getAvailableSlots, bookAppointment } from '../lib/api'; // <-- Usamos el nuevo API
 import Confetti from 'react-confetti';
 import BookingConfirmation from './BookingConfirmation';
 
@@ -14,6 +14,9 @@ const services = [...servicesData].sort((a, b) => a.duration - b.duration);
 export default function BookingFlow({ config }) {
   const {
     isExtra,
+    openHour,
+    closeHour,
+    allowOverflowEnd,
     daysToShow,
   } = config;
 
@@ -29,8 +32,6 @@ export default function BookingFlow({ config }) {
   const [windowSize, setWindowSize] = useState({ width: undefined, height: undefined });
   const [disabledDaysConfig, setDisabledDaysConfig] = useState([]);
 
-  const { isFetchingClient, handleEmailBlur } = useClientAutocomplete(setClientInfo);
-  
   const nextDays = Array.from({ length: daysToShow }).map((_, i) => {
     const day = new Date();
     day.setDate(day.getDate() + i);
@@ -53,15 +54,36 @@ export default function BookingFlow({ config }) {
     try {
       setLoadingSlots(true);
       setErrorSlots(null);
-      const slots = await getAvailableSlots(dateObj, serviceId, isExtra ? 'extra' : 'normal');
-      setAvailableSlots(slots);
+      const service = services.find(s => String(s.id) === String(serviceId));
+      if (!service) throw new Error('Servicio no encontrado.');
+
+      // 1. Llama al backend para obtener los slots OCUPADOS
+      const busySlots = await getAvailableSlots(dateObj, serviceId);
+
+      // 2. Genera TODOS los slots posibles para el día
+      const generatedSlots = generateTimeSlots({
+        date: format(dateObj, 'yyyy-MM-dd'),
+        openHour,
+        closeHour,
+        stepMinutes: 30,
+        durationMinutes: service.duration,
+        busy: busySlots || [],
+        allowOverflowEnd,
+      });
+
+      // 3. Filtra para quedarse solo con los disponibles
+      const finalSlots = generatedSlots
+        .filter(slot => slot.available)
+        .map(slot => format(new Date(slot.start), 'HH:mm'));
+
+      setAvailableSlots(finalSlots);
     } catch (err) {
       setErrorSlots(String(err?.message || err));
       setAvailableSlots([]);
     } finally {
       setLoadingSlots(false);
     }
-  }, [isExtra]);
+  }, [openHour, closeHour, allowOverflowEnd]);
 
   useEffect(() => {
     if (selectedDate && selectedService) {
@@ -107,14 +129,8 @@ export default function BookingFlow({ config }) {
         client: clientInfo,
       };
 
-      const res = await fetch("/api/book", {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-
-      const data = await res.json();
-      if (!res.ok || data?.error) throw new Error(data?.error || 'Error al confirmar la cita');
+      // Usa la nueva función del API para reservar
+      await bookAppointment(payload);
 
       setBookingStatus({ success: true, message: '¡Cita confirmada!' });
 
@@ -350,22 +366,14 @@ export default function BookingFlow({ config }) {
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Email *</label>
-              <div className="relative">
-                <input
-                  type="email"
-                  required
-                  value={clientInfo.email}
-                  onChange={(e) => handleClientInfoChange('email', e.target.value)}
-                  onBlur={handleEmailBlur}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-pink-500 focus:border-transparent transition-colors"
-                  placeholder="tu@email.com"
-                />
-                {isFetchingClient && (
-                  <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
-                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-pink-600"></div>
-                  </div>
-                )}
-              </div>
+              <input
+                type="email"
+                required
+                value={clientInfo.email}
+                onChange={(e) => handleClientInfoChange('email', e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-pink-500 focus:border-transparent transition-colors"
+                placeholder="tu@email.com"
+              />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Teléfono *</label>
