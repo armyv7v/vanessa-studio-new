@@ -3,7 +3,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { services as servicesData } from '../lib/services';
-import { generateTimeSlots } from '../lib/slots';
+import { getAvailableSlots } from '../lib/api';
 import { isAllowedBusinessDay } from '../lib/calendarConfig';
 import { useClientAutocomplete } from '../lib/useClientAutocomplete';
 import Confetti from 'react-confetti';
@@ -11,23 +11,9 @@ import BookingConfirmation from './BookingConfirmation';
 
 const services = [...servicesData].sort((a, b) => a.duration - b.duration);
 
-// Esta función ahora llama a la API interna de Next.js para obtener los slots
-async function listSlotsViaApi({ date, serviceId }) {
-  const params = new URLSearchParams({ date, serviceId });
-  const res = await fetch(`/api/slots?${params.toString()}`);
-  if (!res.ok) {
-    const errorData = await res.json().catch(() => null);
-    throw new Error(errorData?.error || `Error en la API interna (${res.status})`);
-  }
-  return res.json();
-}
-
 export default function BookingFlow({ config }) {
   const {
     isExtra,
-    openHour,
-    closeHour,
-    allowOverflowEnd,
     daysToShow,
   } = config;
 
@@ -67,37 +53,15 @@ export default function BookingFlow({ config }) {
     try {
       setLoadingSlots(true);
       setErrorSlots(null);
-      const yyyyMMdd = format(dateObj, 'yyyy-MM-dd');
-      const service = services.find(s => String(s.id) === String(serviceId));
-      if (!service) throw new Error('Servicio no encontrado.');
-
-      // La lógica de generación de slots ahora está en el backend (api/slots)
-      // pero la mantenemos aquí como fallback o para desarrollo si es necesario.
-      // La llamada principal es a la API.
-      const { busy } = await listSlotsViaApi({ date: yyyyMMdd, serviceId });
-
-      const generatedSlots = generateTimeSlots({
-        date: yyyyMMdd,
-        openHour,
-        closeHour,
-        stepMinutes: 30,
-        durationMinutes: service.duration,
-        busy: busy || [],
-        allowOverflowEnd,
-      });
-
-      const finalSlots = generatedSlots
-        .filter(slot => slot.available)
-        .map(slot => format(new Date(slot.start), 'HH:mm'));
-
-      setAvailableSlots(finalSlots);
+      const slots = await getAvailableSlots(dateObj, serviceId, isExtra ? 'extra' : 'normal');
+      setAvailableSlots(slots);
     } catch (err) {
       setErrorSlots(String(err?.message || err));
       setAvailableSlots([]);
     } finally {
       setLoadingSlots(false);
     }
-  }, [openHour, closeHour, allowOverflowEnd]);
+  }, [isExtra]);
 
   useEffect(() => {
     if (selectedDate && selectedService) {
