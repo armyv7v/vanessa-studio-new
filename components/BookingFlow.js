@@ -5,7 +5,7 @@ import { es } from 'date-fns/locale';
 import { services as servicesData } from '../lib/services';
 import { generateTimeSlots } from '../lib/slots';
 import { isAllowedBusinessDay } from '../lib/calendarConfig';
-import { getAvailableSlots, bookAppointment } from '../lib/api'; // <-- Usamos el nuevo API
+import { getAvailableSlots, bookAppointment, getClientByEmail } from '../lib/api'; // <-- Usamos el nuevo API
 import Confetti from 'react-confetti';
 import BookingConfirmation from './BookingConfirmation';
 
@@ -31,6 +31,8 @@ export default function BookingFlow({ config }) {
   const [bookingStatus, setBookingStatus] = useState(null);
   const [windowSize, setWindowSize] = useState({ width: undefined, height: undefined });
   const [disabledDaysConfig, setDisabledDaysConfig] = useState([]);
+  const [lookupStatus, setLookupStatus] = useState({ state: 'idle', message: '' });
+  const [lastLookupEmail, setLastLookupEmail] = useState('');
 
   const nextDays = Array.from({ length: daysToShow }).map((_, i) => {
     const day = new Date();
@@ -90,6 +92,76 @@ export default function BookingFlow({ config }) {
       fetchSlots(selectedDate, selectedService);
     }
   }, [selectedDate, selectedService, fetchSlots]);
+
+  useEffect(() => {
+    if (step !== 4) {
+      setLookupStatus({ state: 'idle', message: '' });
+      return;
+    }
+
+    const email = (clientInfo.email || '').trim();
+    const normalizedEmail = email.toLowerCase();
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+    if (!email) {
+      setLookupStatus({ state: 'idle', message: '' });
+      setLastLookupEmail('');
+      return;
+    }
+
+    if (!emailRegex.test(email)) {
+      setLookupStatus({ state: 'invalid', message: 'Ingresa un correo valido para buscar tus datos.' });
+      return;
+    }
+
+    if (normalizedEmail === lastLookupEmail) {
+      return;
+    }
+
+    const controller = new AbortController();
+    let cancelled = false;
+
+    setLookupStatus({ state: 'loading', message: 'Buscando datos del cliente...' });
+
+    getClientByEmail(email, controller.signal)
+      .then((customer) => {
+        if (cancelled) return;
+        setLastLookupEmail(normalizedEmail);
+        if (!customer) {
+          setLookupStatus({ state: 'not_found', message: 'No encontramos datos previos para este correo.' });
+          return;
+        }
+        setLookupStatus({ state: 'success', message: 'Completamos tus datos automaticamente.' });
+        setClientInfo((prev) => ({
+          ...prev,
+          name: prev.name || customer.name || '',
+          email: customer.email || prev.email,
+          phone: prev.phone || customer.phone || '',
+        }));
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        if (error.name === 'AbortError') {
+          return;
+        }
+        setLookupStatus({ state: 'error', message: 'No pudimos recuperar los datos del cliente.' });
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLookupStatus((current) => {
+            if (current.state === 'loading') {
+              return { state: 'idle', message: '' };
+            }
+            return current;
+          });
+        }
+      });
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [clientInfo.email, step, lastLookupEmail]);
 
   // --- HANDLERS ---
   const handleServiceSelect = (serviceId) => {
@@ -374,6 +446,21 @@ export default function BookingFlow({ config }) {
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-pink-500 focus:border-transparent transition-colors"
                 placeholder="tu@email.com"
               />
+              {lookupStatus.state === 'loading' && (
+                <p className="mt-1 text-sm text-gray-500">{lookupStatus.message}</p>
+              )}
+              {lookupStatus.state === 'success' && (
+                <p className="mt-1 text-sm text-green-600">{lookupStatus.message}</p>
+              )}
+              {lookupStatus.state === 'not_found' && (
+                <p className="mt-1 text-sm text-gray-600">{lookupStatus.message}</p>
+              )}
+              {lookupStatus.state === 'error' && (
+                <p className="mt-1 text-sm text-red-600">{lookupStatus.message}</p>
+              )}
+              {lookupStatus.state === 'invalid' && (
+                <p className="mt-1 text-sm text-gray-600">{lookupStatus.message}</p>
+              )}
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Teléfono *</label>
