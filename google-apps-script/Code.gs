@@ -17,23 +17,30 @@ function sendMaintenanceReminders() {
 
   const data = sh.getDataRange().getValues();
   if (data.length <= 1) return;
+  Logger.log(`Total filas (incluyendo encabezado): ${data.length}`);
 
-  const IDX = { NAME: 1, EMAIL: 2, SERVICE: 4, START_LOCAL: 5 };
+  const IDX = { NAME: 1, EMAIL: 2, SERVICE: 4, START_LOCAL: 5, END_LOCAL: 6 };
   const lastByEmail = {};
+  const now = new Date();
 
   // 1. Encuentra la última cita de cada cliente
   for (let i = 1; i < data.length; i++) {
     const row = data[i];
+    Logger.log(`Fila ${i + 1} raw: ${JSON.stringify(row)}`);
     const email = (row[IDX.EMAIL] || "").toString().trim().toLowerCase();
     if (!email) continue;
 
-    const dateObject = row[IDX.START_LOCAL];
-    if (!dateObject || !(dateObject instanceof Date)) continue;
-
-    const startDate = new Date(dateObject);
+    const startDate = parseSheetDate(row[IDX.END_LOCAL] || row[IDX.START_LOCAL]);
+    if (!(startDate instanceof Date) || isNaN(startDate.getTime())) {
+      Logger.log(`No se pudo interpretar fecha para ${email}: ${row[IDX.END_LOCAL]} / ${row[IDX.START_LOCAL]}`);
+      continue;
+    }
+    if (startDate > now) continue; // ignoramos citas futuras
+    Logger.log(`Fila ${i + 1}: ${email} -> ${startDate}`);
 
     const prev = lastByEmail[email];
     if (!prev || startDate > prev.startDate) {
+      Logger.log(`Registrando última cita para ${email} en ${startDate}`);
       lastByEmail[email] = {
         name: row[IDX.NAME] || "",
         service: row[IDX.SERVICE] || "",
@@ -42,6 +49,7 @@ function sendMaintenanceReminders() {
       };
     }
   }
+  Logger.log(`Clientes con última cita registrada: ${Object.keys(lastByEmail).length}`);
 
   // --- INICIO DE MEJORA DE CÓDIGO ---
   // Función auxiliar para obtener una fecha "solo día" en la zona horaria especificada.
@@ -51,7 +59,6 @@ function sendMaintenanceReminders() {
     return new Date(formattedDate); // Se interpreta como medianoche UTC, pero la comparación es correcta.
   };
 
-  const now = new Date();
   const today = getDateOnlyInTimezone(now, TZ); // Obtener "hoy" a medianoche en America/Santiago
   // --- FIN DE MEJORA DE CÓDIGO ---
 
@@ -60,25 +67,12 @@ function sendMaintenanceReminders() {
     const rec = lastByEmail[email];
     const lastDateOnly = getDateOnlyInTimezone(rec.startDate, TZ); // Obtener la fecha de la última cita a medianoche
     const diffDays = Math.floor((today.getTime() - lastDateOnly.getTime()) / (1000 * 60 * 60 * 24));
+    Logger.log(`Evaluando ${rec.name} <${email}>: última cita ${rec.startStr}, diff ${diffDays} días`);
 
-    if (diffDays >= 20 && !hasReminderLogged(email, rec.startStr, "REMINDER20")) {
-      const html = buildMaintenanceReminderHtml({
-        clientName: rec.name || "Bella",
-        lastDateStr: Utilities.formatDate(rec.startDate, TZ, "dd/MM/yyyy"),
-        serviceName: rec.service || "",
-        diffDays: diffDays
-      });
-
-      const subject = "💖 Recordatorio de Mantenimiento — Vanessa Nails Studio";
-      try {
-        MailApp.sendEmail({ to: email, subject, htmlBody: html });
-        if (OWNER_EMAIL) {
-          MailApp.sendEmail({ to: OWNER_EMAIL, subject: `Recordatorio enviado (${diffDays} días) — ${rec.name} <${email}>`, htmlBody: html });
-        }
-        logReminderSent(email, rec.startStr, "REMINDER20");
-      } catch (err) {
-        Logger.log(`ERROR al enviar correo a ${email}: ${err}`);
-      }
+    if (diffDays >= 28 && !hasReminderLogged(email, rec.startStr, "REMINDER28")) {
+      sendReminder(email, rec, diffDays, "REMINDER28", "💗 Queremos volver a verte pronto");
+    } else if (diffDays >= 20 && !hasReminderLogged(email, rec.startStr, "REMINDER20")) {
+      sendReminder(email, rec, diffDays, "REMINDER20", "💖 Recordatorio de Mantenimiento — Vanessa Nails Studio");
     }
   });
 }
@@ -112,10 +106,83 @@ function logReminderSent(email, baseDateStr, type) {
   sh.appendRow([new Date(), email, type, baseDateStr, "Sent OK"]);
 }
 
-function buildMaintenanceReminderHtml({ clientName, lastDateStr, serviceName, diffDays }) {
+/**
+ * Convierte el valor de Sheets (Date o String) en un objeto Date válido.
+ * Acepta formatos ISO (2025-10-26T13:20:54.281Z) y valores DD/MM/YYYY o MM/DD/YYYY.
+ */
+function parseSheetDate(value) {
+  if (!value) return null;
+  if (value instanceof Date) return value;
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+
+    // Intento 1: ISO 8601 u otros formatos que Date entienda nativamente
+    const isoParsed = new Date(trimmed);
+    if (!isNaN(isoParsed.getTime())) {
+      return isoParsed;
+    }
+
+    // Intento 1b: Formato con GMT y zona entre paréntesis (ej. "Sat Aug 23 2025 10:30:00 GMT-0400 (Chile Standard Time)")
+    const withoutParens = trimmed.replace(/\s*\(.*\)\s*$/, "");
+    const gmtParsed = new Date(withoutParens);
+    if (!isNaN(gmtParsed.getTime())) {
+      return gmtParsed;
+    }
+
+    // Intento 2: formatos como DD/MM/YYYY HH:mm:ss o MM/DD/YYYY HH:mm:ss
+    const match = trimmed.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+    if (match) {
+      let [ , part1, part2, yearStr, hourStr, minStr, secStr ] = match;
+      const year = yearStr.length === 2 ? 2000 + parseInt(yearStr, 10) : parseInt(yearStr, 10);
+      const first = parseInt(part1, 10);
+      const secondPart = parseInt(part2, 10);
+
+      // Asumimos formato latino (DD/MM) si el primer valor > 12; de lo contrario tratamos como MM/DD.
+      let day, month;
+      if (first > 12) {
+        day = first;
+        month = secondPart - 1;
+      } else if (secondPart > 12) {
+        month = first - 1;
+        day = secondPart;
+      } else {
+        // Ambos <= 12: mantenemos DD/MM (comportamiento anterior)
+        day = first;
+        month = secondPart - 1;
+      }
+
+      const hour = hourStr ? parseInt(hourStr, 10) : 0;
+      const minute = minStr ? parseInt(minStr, 10) : 0;
+      const seconds = secStr ? parseInt(secStr, 10) : 0;
+
+      const candidate = new Date(year, month, day, hour, minute, seconds);
+      if (!isNaN(candidate.getTime())) {
+        return candidate;
+      }
+    }
+  }
+
+  return null;
+}
+
+function buildMaintenanceReminderHtml({ clientName, lastDateStr, serviceName, diffDays, type }) {
   const whatsLink = `https://wa.me/${WHATSAPP_PHONE}?text=${encodeURIComponent(
     `Hola Vanessa 💖 Quiero agendar mi *mantenimiento*. Soy ${clientName}.`
   )}`;
+  const emphasis = type === "REMINDER28"
+    ? `<p style="margin:14px 0;padding:12px;border-radius:10px;background:#fff7fb;border:1px solid #f5cbe0">
+         <b>Ya van ${diffDays} días desde tu última sesión.</b><br>
+         Nos encantaría volver a mimar tus manos; después de los 30 días solemos retirar y reconstruir
+         para cuidar la salud de tus uñas, así que si puedes, agendemos juntas tu próxima cita 💖
+       </p>`
+    : `<div style="background:#fffaf0;border:1px solid #f2d7e2;border-radius:10px;padding:14px;margin:14px 0">
+         <p style="margin:0"><b>Si superas los 30 días:</b> debemos realizar un
+           <b>retiro completo</b> de la estructura anterior para evitar <b>acumulación de humedad</b>
+           y prevenir <b>posibles hongos</b>. Es por tu salud y seguridad 🙏.</p>
+       </div>`;
+
   return `
   <div style="font-family:Arial,sans-serif;color:#333;line-height:1.6">
     <div style="max-width:560px;margin:auto;border:1px solid #f2d7e2;border-radius:12px;overflow:hidden">
@@ -135,11 +202,7 @@ function buildMaintenanceReminderHtml({ clientName, lastDateStr, serviceName, di
             <li><b>Bienestar personal:</b> manos siempre prolijas y listas para todo 💖.</li>
           </ul>
         </div>
-        <div style="background:#fffaf0;border:1px solid #f2d7e2;border-radius:10px;padding:14px;margin:14px 0">
-          <p style="margin:0"><b>Si superas los 30 días:</b> debemos realizar un
-            <b>retiro completo</b> de la estructura anterior para evitar <b>acumulación de humedad</b>
-            y prevenir <b>posibles hongos</b>. Es por tu salud y seguridad 🙏.</p>
-        </div>
+        ${emphasis}
         <p style="margin:16px 0 10px">¿Agendamos tu mantención?</p>
         <p>
           <a href="${whatsLink}"
@@ -153,4 +216,27 @@ function buildMaintenanceReminderHtml({ clientName, lastDateStr, serviceName, di
       </div>
     </div>
   </div>`;
+}
+function sendReminder(email, rec, diffDays, type, subject) {
+  const html = buildMaintenanceReminderHtml({
+    clientName: rec.name || "Bella",
+    lastDateStr: Utilities.formatDate(rec.startDate, TZ, "dd/MM/yyyy"),
+    serviceName: rec.service || "",
+    diffDays,
+    type,
+  });
+
+  try {
+    MailApp.sendEmail({ to: email, subject, htmlBody: html });
+    if (OWNER_EMAIL) {
+      MailApp.sendEmail({
+        to: OWNER_EMAIL,
+        subject: `${subject} — ${rec.name} <${email}>`,
+        htmlBody: html,
+      });
+    }
+    logReminderSent(email, rec.startStr, type);
+  } catch (err) {
+    Logger.log(`ERROR al enviar correo (${type}) a ${email}: ${err}`);
+  }
 }
