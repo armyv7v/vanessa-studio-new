@@ -8,7 +8,11 @@ const extraConfig = {
   openHour: 18,
   closeHour: 20,
   allowOverflowEnd: true,
-  daysToShow: 70,
+<<<<<<< HEAD
+  daysToShow: 70, // Mostrar disponibilidad para los próximos 70 días
+=======
+  daysToShow: 70, // Mostrar disponibilidad para los próximos 70 días // Mostrar disponibilidad para los próximos 70 días
+>>>>>>> 88a743d (mmostrar 70 dias del calendario)
 };
 
 export default function ExtraCup() {

@@ -1,0 +1,3 @@
+﻿{
+  "extends": "@opennextjs/cloudflare/config"
+}

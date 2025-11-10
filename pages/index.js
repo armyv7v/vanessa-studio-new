@@ -10,7 +10,11 @@ const normalConfig = {
   openHour: 10,
   closeHour: 21, // Horario extendido por defecto
   allowOverflowEnd: true, // Permitir que el último turno termine después de las 21:00
-  daysToShow: 70,
+<<<<<<< HEAD
+  daysToShow: 70, // Mostrar disponibilidad para los próximos 70 días
+=======
+  daysToShow: 70, // Mostrar disponibilidad para los próximos 70 días // Mostrar disponibilidad para los próximos 70 días
+>>>>>>> 88a743d (mmostrar 70 dias del calendario)
 };
 
 export default function Home() {
