@@ -1,0 +1,15 @@
+{
+  "/_app": "pages/_app.js",
+  "/_error": "pages/_error.js",
+  "/_document": "pages/_document.js",
+  "/api/gs-check": "pages/api/gs-check.js",
+  "/api/hello": "pages/api/hello.js",
+  "/api/slots": "pages/api/slots.js",
+  "/extra-cupos": "pages/extra-cupos.html",
+  "/": "pages/index.html",
+  "/api/client": "pages/api/client.js",
+  "/api/book": "pages/api/book.js",
+  "/api/subscribe-push": "pages/api/subscribe-push.js",
+  "/api/test-config": "pages/api/test-config.js",
+  "/404": "pages/404.html"
+}

@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "functions": {
+    "/api/book": {},
+    "/api/subscribe-push": {},
+    "/api/test-config": {},
+    "/api/client": {}
+  }
+}
