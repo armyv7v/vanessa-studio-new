@@ -10,7 +10,7 @@ const normalConfig = {
   openHour: 10,
   closeHour: 21, // Horario extendido por defecto
   allowOverflowEnd: true, // Permitir que el último turno termine después de las 21:00
-  daysToShow: 21,
+  daysToShow: 70,
 };
 
 export default function Home() {
