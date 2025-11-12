@@ -8,7 +8,7 @@ const extraConfig = {
   openHour: 18,
   closeHour: 20,
   allowOverflowEnd: true,
-  daysToShow: 35,
+  daysToShow: 70,
 };
 
 export default function ExtraCup() {
